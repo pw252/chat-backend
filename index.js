@@ -14,20 +14,52 @@ const uploadRoutes = require("./routes/uploads")
 
 const app = express()
 app.use(express.json())
-app.use(cors({
-  origin: ["https://chat-client-j2yj.vercel.app"],
-  methods: ["GET","POST","PUT","DELETE"],
-  credentials: true,
-  allowedHeaders: 'Content-Type,Authorization'
-}));
+app.use(
+  cors({
+    origin: ["https://chat-client-j2yj.vercel.app"],
+    methods: ["GET", "POST", "PUT", "DELETE"],
+    credentials: true,
+    allowedHeaders: "Content-Type,Authorization",
+  }),
+)
 app.use("/uploads", express.static(path.join(__dirname, "uploads")))
 
 app.use("/api", authRoutes)
 app.use("/api/messages", messageRoutes)
 app.use("/api/userlistwithchat", userChatRoutes)
 app.use("/api", uploadRoutes)
+// Add a route to get a user's last seen time
+app.get("/api/user/last-seen/:userId", async (req, res) => {
+  try {
+    const user = await User.findById(req.params.userId)
+    if (!user) {
+      return res.status(404).json({ message: "User not found" })
+    }
+
+    res.json({ lastSeen: user.lastSeen })
+  } catch (err) {
+    console.error("Error fetching last seen:", err)
+    res.status(500).json({ message: "Server error" })
+  }
+})
+
+// Add a route to update a user's last seen time
+app.post("/api/user/update-last-seen/:userId", async (req, res) => {
+  try {
+    const timestamp = req.body.timestamp || new Date()
+    await User.findByIdAndUpdate(req.params.userId, { lastSeen: timestamp })
+
+    // Broadcast to all connected users
+    io.emit("user last seen", { userId: req.params.userId, timestamp })
+
+    res.json({ success: true })
+  } catch (err) {
+    console.error("Error updating last seen:", err)
+    res.status(500).json({ message: "Server error" })
+  }
+})
 app.get("/", (req, res) => {
-  res.send("Welcome to the Webhook Servers!");
+  res.send("Welcome to the Webhook Servers!")
 })
 const server = createServer(app)
 const io = new Server(server, {
@@ -55,8 +87,11 @@ const updateLastSeen = async (userId) => {
 
     // Broadcast to all connected users
     io.emit("user last seen", { userId, timestamp })
+
+    return timestamp
   } catch (err) {
     console.error("Error updating last seen:", err)
+    return null
   }
 }
 
@@ -83,9 +118,18 @@ io.on("connection", (socket) => {
   })
 
   // Listen for user identification
-  socket.on("register", (userId) => {
+  socket.on("register", async (userId) => {
     users[userId] = socket.id // Map userId to socketId
     console.log(`User ${userId} connected with socket ${socket.id}`)
+
+    // Update user's last seen time to show they're online
+    try {
+      const timestamp = new Date()
+      lastSeenTimes[userId] = timestamp
+      await User.findByIdAndUpdate(userId, { lastSeen: timestamp })
+    } catch (err) {
+      console.error("Error updating last seen on register:", err)
+    }
 
     // Broadcast updated online users list
     broadcastOnlineUsers()
@@ -177,19 +221,19 @@ io.on("connection", (socket) => {
       const userSocket = io.sockets.sockets.get(socketId)
       if (userSocket) {
         console.log(`Forcefully disconnected user: ${userId}`)
-  
+
         // Update last seen time
         updateLastSeen(userId)
-  
+
         // Remove from online users list
         delete users[userId]
-  
+
         // Broadcast updated online users list
         broadcastOnlineUsers()
       }
     }
   })
-  
+
   // Handle user disconnect
   socket.on("disconnect", () => {
     // Find user by socketId and remove them
@@ -209,6 +253,22 @@ io.on("connection", (socket) => {
     }
   })
 })
+
+// Periodically update last seen for online users to keep it fresh
+setInterval(
+  async () => {
+    for (const userId in users) {
+      try {
+        const timestamp = new Date()
+        lastSeenTimes[userId] = timestamp
+        await User.findByIdAndUpdate(userId, { lastSeen: timestamp })
+      } catch (err) {
+        console.error(`Error updating periodic last seen for user ${userId}:`, err)
+      }
+    }
+  },
+  5 * 60 * 1000,
+) // Every 5 minutes
 
 mongoose.connect(process.env.MONGO_URI).then(() => {
   console.log("Connected to MongoDB")
