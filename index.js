@@ -31,7 +31,7 @@ app.get("/", (req, res) => {
 })
 const server = createServer(app)
 const io = new Server(server, {
-  cors: { origin: "http://localhost:3000", methods: ["GET", "POST"] },
+  cors: { origin: "https://chat-backend-production-b501.up.railway.app", methods: ["GET", "POST"] },
 })
 
 // Handle socket.io connections
