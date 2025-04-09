@@ -41,7 +41,7 @@ router.post("/upload", upload.array("images", 5), (req, res) => {
     }
 
     // Return the URLs to the uploaded files
-    const imageUrls = req.files.map((file) => `https://chat-client-j2yj.vercel.app/uploads/${file.filename}`)
+    const imageUrls = req.files.map((file) => `https://chat-backend-production-b501.up.railway.app/uploads/${file.filename}`)
     res.status(200).json({ imageUrls })
   } catch (error) {
     console.error("Upload error:", error)
@@ -56,7 +56,7 @@ router.post("/upload-audio", upload.array("audio", 3), (req, res) => {
     }
 
     // Return the URLs to the uploaded audio files
-    const audioUrls = req.files.map((file) => `https://chat-client-j2yj.vercel.app/uploads/${file.filename}`)
+    const audioUrls = req.files.map((file) => `https://chat-backend-production-b501.up.railway.app/uploads/${file.filename}`)
     res.status(200).json({ audioUrls })
   } catch (error) {
     console.error("Upload error:", error)
@@ -71,7 +71,7 @@ router.post("/upload-document", upload.array("documents", 5), (req, res) => {
     }
 
     // Return the URLs to the uploaded document files
-    const documentUrls = req.files.map((file) => `https://chat-client-j2yj.vercel.app/uploads/${file.filename}`)
+    const documentUrls = req.files.map((file) => `https://chat-backend-production-b501.up.railway.app/uploads/${file.filename}`)
     res.status(200).json({ documentUrls })
   } catch (error) {
     console.error("Upload error:", error)
