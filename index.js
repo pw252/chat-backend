@@ -11,6 +11,7 @@ const authRoutes = require("./routes/auth")
 const messageRoutes = require("./routes/messages")
 const userChatRoutes = require("./routes/userChat")
 const uploadRoutes = require("./routes/uploads")
+const UserChat = require("./models/UserChat")
 
 const app = express()
 app.use(express.json())
@@ -22,12 +23,38 @@ app.use(
     allowedHeaders: "Content-Type,Authorization",
   }),
 )
+// app.use(cors())
 app.use("/uploads", express.static(path.join(__dirname, "uploads")))
 
 app.use("/api", authRoutes)
 app.use("/api/messages", messageRoutes)
 app.use("/api/userlistwithchat", userChatRoutes)
 app.use("/api", uploadRoutes)
+
+app.delete("/chat", async (req, res) => {
+  const { currentUserId, chatWithId } = req.body;
+
+  try {
+    const userChat = await UserChat.findOne({ currentUserId });
+   console.log(userChat)
+    if (!userChat) {
+      return res.status(404).json({ message: "User not found." });
+    }
+
+    const originalLength = userChat.chats.length;
+    userChat.chats = userChat.chats.filter(chat => chat.chatWithId !== chatWithId);
+
+    if (userChat.chats.length === originalLength) {
+      return res.status(404).json({ message: "Chat not found." });
+    }
+
+    await userChat.save();
+    res.status(200).json({ message: "Chat deleted successfully.", chats: userChat.chats });
+  } catch (error) {
+    console.error("Error deleting chat:", error);
+    res.status(500).json({ message: "Server error." });
+  }
+});
 // Add a route to get a user's last seen time
 app.get("/api/user/last-seen/:userId", async (req, res) => {
   try {
@@ -58,6 +85,49 @@ app.post("/api/user/update-last-seen/:userId", async (req, res) => {
     res.status(500).json({ message: "Server error" })
   }
 })
+
+// Add a new route to delete a single message
+app.delete("/api/messages/batch", async (req, res) => {
+  try {
+    const { messageIds } = req.body;
+
+    if (!messageIds || !Array.isArray(messageIds) || messageIds.length === 0) {
+      return res.status(400).json({ message: "Invalid message IDs" });
+    }
+
+    await Message.deleteMany({ _id: { $in: messageIds } });
+
+    io.emit("messages batch deleted", { messageIds });
+
+    res.json({ success: true, message: "Messages deleted successfully" });
+  } catch (err) {
+    console.error("Error deleting messages:", err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+
+app.delete("/api/messages/:messageId", async (req, res) => {
+  try {
+    const { messageId } = req.params;
+    const message = await Message.findById(messageId);
+
+    if (!message) {
+      return res.status(404).json({ message: "Message not found" });
+    }
+
+    await Message.findByIdAndDelete(messageId);
+
+    io.emit("message deleted", { messageId });
+
+    res.json({ success: true, message: "Message deleted successfully" });
+  } catch (err) {
+    console.error("Error deleting message:", err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+
 app.get("/", (req, res) => {
   res.send("Welcome to the Webhook Servers!")
 })
@@ -66,26 +136,21 @@ const io = new Server(server, {
   cors: { origin: "https://chat-client-j2yj.vercel.app", methods: ["GET", "POST"] },
 })
 
-// Handle socket.io connections
-const users = {} // To store userId -> socketId mapping
-const lastSeenTimes = {} // To store userId -> lastSeen timestamp
+const users = {}
+const lastSeenTimes = {}
 
-// Broadcast online users whenever a user connects or disconnects
 const broadcastOnlineUsers = () => {
   const onlineUserIds = Object.keys(users)
   io.emit("users online", onlineUserIds)
 }
 
-// Update last seen time for a user
 const updateLastSeen = async (userId) => {
   try {
     const timestamp = new Date()
     lastSeenTimes[userId] = timestamp
 
-    // Update in database
     await User.findByIdAndUpdate(userId, { lastSeen: timestamp })
 
-    // Broadcast to all connected users
     io.emit("user last seen", { userId, timestamp })
 
     return timestamp
@@ -99,7 +164,6 @@ io.on("connection", (socket) => {
   console.log("A user connected", socket.id)
 
   socket.on("ping", () => {
-    // Just respond to keep the connection alive
     socket.emit("pong")
   })
   // Typing indicator
@@ -131,13 +195,10 @@ io.on("connection", (socket) => {
       console.error("Error updating last seen on register:", err)
     }
 
-    // Broadcast updated online users list
     broadcastOnlineUsers()
 
-    // Send last seen times to the newly connected user
     socket.emit("last seen times", lastSeenTimes)
   })
-  // Update the socket.on("chat message") handler to include document support
   socket.on("chat message", async (data) => {
     const { senderId, receiverId, message, username, imageUrls, audioUrls, documentUrls } = data
 
@@ -184,10 +245,8 @@ io.on("connection", (socket) => {
     }
   })
 
-  // Add socket event handler for seen messages in the io.on("connection") block
   socket.on("mark messages seen", async ({ userId, chatWithId }) => {
     try {
-      // Update all messages from chatWithId to userId as seen
       const result = await Message.updateMany(
         {
           sender: chatWithId,
@@ -202,7 +261,6 @@ io.on("connection", (socket) => {
         },
       )
 
-      // Emit socket event to notify the sender their messages were seen
       const senderSocketId = users[chatWithId]
       if (senderSocketId) {
         io.to(senderSocketId).emit("messages seen", {
@@ -212,6 +270,51 @@ io.on("connection", (socket) => {
       }
     } catch (err) {
       console.error("Error marking messages as seen via socket:", err)
+    }
+  })
+
+  // Add socket event handler for message deletion in the io.on("connection") block
+  socket.on("delete message", async ({ messageId, senderId }) => {
+    try {
+      const message = await Message.findById(messageId)
+
+      if (!message) {
+        return
+      }
+
+      // Check if the sender is the one who's deleting the message
+      if (message.sender.toString() === senderId) {
+        await Message.findByIdAndDelete(messageId)
+
+        // Broadcast to all connected users
+        io.emit("message deleted", { messageId })
+      }
+    } catch (err) {
+      console.error("Error deleting message via socket:", err)
+    }
+  })
+
+  // Add socket event handler for batch message deletion
+  socket.on("delete messages batch", async ({ messageIds, senderId }) => {
+    try {
+      // Find messages that belong to the sender
+      const messages = await Message.find({
+        _id: { $in: messageIds },
+        sender: senderId,
+      })
+
+      if (messages.length === 0) {
+        return
+      }
+
+      const validMessageIds = messages.map((msg) => msg._id)
+
+      await Message.deleteMany({ _id: { $in: validMessageIds } })
+
+      // Broadcast to all connected users
+      io.emit("messages batch deleted", { messageIds: validMessageIds })
+    } catch (err) {
+      console.error("Error batch deleting messages via socket:", err)
     }
   })
 
