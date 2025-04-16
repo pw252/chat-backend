@@ -17,7 +17,7 @@ const app = express()
 app.use(express.json())
 app.use(
   cors({
-    origin: ["https://chat-client-j2yj.vercel.app"],
+    origin: ["https://chat-client-akio.vercel.app"],
     methods: ["GET", "POST", "PUT", "DELETE"],
     credentials: true,
     allowedHeaders: "Content-Type,Authorization",
@@ -133,7 +133,7 @@ app.get("/", (req, res) => {
 })
 const server = createServer(app)
 const io = new Server(server, {
-  cors: { origin: "https://chat-client-j2yj.vercel.app", methods: ["GET", "POST"] },
+  cors: { origin: "https://chat-client-akio.vercel.app", methods: ["GET", "POST"] },
 })
 
 const users = {}
